@@ -156,6 +156,11 @@ class Qwen3ASRLoader:
                                "该值在加载模型时固定,值过小会导致长音频/信息密度高的语言(如中文)转录文本被截断。"
                                "建议根据 Transcribe 节点里的 chunk_seconds 一起调整:分片越长,这个值也需要越大。"
                 }),
+                "max_inference_batch_size": ("INT", {
+                    "default": 4, "min": 1, "max": 128, "step": 1,
+                    "tooltip": "模型单次推理时允许合并处理的最大分片(批次)数量。"
+                               "该值在加载模型时固定;调大可提升多分片/批量转录时的吞吐,但会占用更多显存。"
+                }),
             },
             "optional": {
                 "forced_aligner": (list(QWEN3_FORCED_ALIGNERS.keys()), {"default": "None"}),
@@ -168,7 +173,7 @@ class Qwen3ASRLoader:
     FUNCTION = "load_model"
     CATEGORY = "Qwen3-ASR"
 
-    def load_model(self, repo_id, source, precision, attention, max_new_tokens=1024, forced_aligner="None", local_model_path=""):
+    def load_model(self, repo_id, source, precision, attention, max_new_tokens=1024, max_inference_batch_size=4, forced_aligner="None", local_model_path=""):
         device = mm.get_torch_device()
         
         dtype = torch.float32
@@ -195,7 +200,7 @@ class Qwen3ASRLoader:
         model_kwargs = dict(
             dtype=dtype,
             device_map=str(device),
-            max_inference_batch_size=32,
+            max_inference_batch_size=max_inference_batch_size,
             max_new_tokens=max_new_tokens,
         )
         if attention != "auto":
