@@ -5,6 +5,7 @@ import numpy as np
 import folder_paths
 import comfy.model_management as mm
 from qwen_asr import Qwen3ASRModel
+from qwen_asr.inference.utils import split_audio_into_chunks
 
 # Register Qwen3-ASR models folder with ComfyUI
 QWEN3_ASR_MODELS_DIR = os.path.join(folder_paths.models_dir, "Qwen3-ASR")
@@ -104,14 +105,11 @@ def load_audio_input(audio_input):
 
 def split_waveform_by_duration(wav: np.ndarray, sr: int, chunk_seconds: float):
     """
-    将一段 mono waveform 按固定时长切成若干段,避免超长音频一次性喂给模型导致显存溢出。
+    将一段 mono waveform 按目标时长切成若干段,避免超长音频一次性喂给模型导致显存溢出。
 
-    qwen_asr 库内部的 Qwen3ASRModel.transcribe() 虽然也会自动切片,但阈值是写死的常量
-    (不开启时间戳时单片最长 1200s,开启时间戳时单片最长 180s),对显存较小的显卡来说依然
-    偏大。这里在节点层做一次更细粒度的预切片,切片结果再交给 model.transcribe() 批量处理,
-    这样库内部的切片逻辑不会再次触发(因为每一段本身已经小于内部阈值)。
-
-    采用最简单的定长切分(不做静音边界检测),切片之间无重叠、无缝拼接。
+    直接复用 qwen_asr 库内部的 split_audio_into_chunks:在每个目标切点 ±5s 窗口内,
+    用 100ms 滑窗找能量最低(最接近静音/停顿)的位置下刀;切片无重叠、无缝拼接,
+    过短的尾段会在末尾补零到至少 0.5s。返回值中的偏移按真实边界累计,补零不计入。
 
     Args:
         wav: mono float32 波形。
@@ -122,23 +120,11 @@ def split_waveform_by_duration(wav: np.ndarray, sr: int, chunk_seconds: float):
         List[Tuple[np.ndarray, float]]: [(分片波形, 该分片在原始音频中的起始秒数), ...]
     """
     chunk_seconds = float(chunk_seconds)
-    total_samples = wav.shape[0]
 
     if chunk_seconds <= 0:
         return [(wav, 0.0)]
 
-    chunk_samples = max(1, int(chunk_seconds * sr))
-    if total_samples <= chunk_samples:
-        return [(wav, 0.0)]
-
-    segments = []
-    start = 0
-    while start < total_samples:
-        end = min(start + chunk_samples, total_samples)
-        segments.append((wav[start:end], start / sr))
-        start = end
-
-    return segments
+    return split_audio_into_chunks(wav=wav, sr=sr, max_chunk_sec=chunk_seconds)
 
 
 class Qwen3ASRLoader:
